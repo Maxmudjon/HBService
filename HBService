@@ -1,0 +1,272 @@
+#!/bin/bash
+# /etc/init.d/HBService
+
+version="0.0.7"
+basepath=$(cd `dirname $(readlink -f "$0")`; pwd);
+
+# *********************************************************
+# НАСТРОЙКИ
+# *********************************************************
+
+# Стартовый параметры для homebridge
+STARTUP_PARAM=""
+# STARTUP_PARAM="-D"
+# STARTUP_PARAM="-I"
+# STARTUP_PARAM="-D -I"
+
+# Путь к файла журнала
+# "${basepath}/logs/" - Файл журналов в каталоге, где находится скрипт
+# "/home/pi/BHService_logs/" - Файл журналов в каталоге /home/pi/BHService_logs/
+# LOG_FILE_PATH="/home/pi/BHService_logs/"
+#
+# "" - Без файл журналов
+# LOG_FILE_PATH=""
+#
+# "${basepath}/logs/" - Файл журналов в каталоге, где находится скрипт
+LOG_FILE_PATH="${basepath}/logs/"
+
+# Пут к плагинам
+# PLUGIN_FILE_PATH="/usr/lib/node_modules/"
+PLUGIN_FILE_PATH=""
+
+# Homebridge 
+# Например：
+# '/home/pi/HBService/service/MiHomeOutletPlatform/' - Путь к файлу конфигурации бриджа MiHomeOutletPlatform
+# '/home/pi/HBService/service/MiHomeOutletPlatform/config' - Путь к файлу config.json для HomeBridge
+# '/home/pi/HBService/service/MiHomeOutletPlatform/plugin' - Путь к плагинам для HomeBridge работает когда PLUGIN_FILE_PATH не указали ничего (PLUGIN_FILE_PATH="")
+# '/home/pi/HBService/service/RaspberryPi/' - Путь к файлу конфигурации бриджа RaspberryPi
+# '/home/pi/HBService/service/RaspberryPi/config' - Путь к файлу config.json для HomeBridge
+# '/home/pi/HBService/service/RaspberryPi/plugin' - Путь к плагинам для HomeBridge работает когда PLUGIN_FILE_PATH не указали ничего (PLUGIN_FILE_PATH="")
+
+hbPaths=(
+'/home/pi/HBService/service/MiHomeOutletPlatform/'
+'/home/pi/HBService/service/RaspberryPi/'
+);
+
+# *********************************************************
+
+getIndexs() {
+    if [ -z "$1" ]; then
+        for((index=0;index<=${#hbPaths[@]};index++)); do
+            echo $(($index-1))
+        done
+    else
+        str=$1;
+        arr=(${str//,/ });
+        for i in ${arr[@]}; do
+            echo $(($i-1))
+        done
+    fi
+}
+
+getHomebridgePID() {
+    pid=`ps -ef | grep homebridge | grep $1 | grep -v grep | head -1 | awk '{print $2}'`
+    echo $pid;
+}
+
+getBridgeConfig() {
+    if [ -f "$1" ]; then
+        bridgeStr=`awk BEGIN{RS=EOF}'{gsub(/\n/," ");print}' $1 | awk '{gsub(/ /,"")}1' | awk '{gsub(/\t/,"")}1' | awk -F "\"bridge\":{" '{print $2}' | awk -F "}," '{print $1}'`;
+        if [ -n "$bridgeStr" ]; then
+            mNum=`echo $bridgeStr | awk -v RS=':' 'END {print --NR}'`;
+            yNum=`echo $bridgeStr | awk -v RS='\"' 'END {print --NR}'`;
+            if [ "$mNum" -eq "9" ] && [ "$yNum" -eq "14" ]; then
+                echo $bridgeStr;
+                return;
+            fi
+        fi
+    fi
+    echo "";
+}
+
+getBridgeConfigStringValue() {
+    if [ -n "$1" ]; then
+        valueStr=`echo $1 | awk -F "\"$2\":\"" '{print $2}' | awk -F "\"" '{print $1}'`;
+        echo $valueStr;
+        return;
+    fi
+    echo $3;
+}
+
+getBridgeConfigIntegerValue() {
+    if [ -n "$1" ]; then
+        valueStr=`echo $1 | awk -F "\"$2\":" '{print $2}' | awk -F "," '{print $1}'`;
+        echo $valueStr;
+        return;
+    fi
+    echo $3;
+}
+
+config() {
+    indexs=$(getIndexs $1);
+    for index in $indexs; do
+        if [ $index -lt 0 ] || [ $index -gt ${#hbPaths[@]} ]; then
+            continue;
+        fi
+        echo $(getBridgeConfigStringValue);
+        bridgeConfig=$(getBridgeConfig "${hbPaths[$index]}/config/config.json");
+        echo -n -e "[$(($index+1))]" | awk '{printf ("%05s",$NF)}';
+        echo -n -e " "
+        echo -n $(getBridgeConfigStringValue "$bridgeConfig" "name" "-") | awk '{printf ("%-40s",$NF)}';
+        echo -n -e " "
+        echo -n "["$(getBridgeConfigStringValue "$bridgeConfig" "pin" "----------")"]"
+        echo -n -e "    "
+        echo -n $(getBridgeConfigStringValue "$bridgeConfig" "username" "--:--:--:--:--:--")
+        echo -n -e "    "
+        echo -n $(getBridgeConfigIntegerValue "$bridgeConfig" "port" "-----") | awk '{printf ("%5s",$NF)}';
+        echo -n -e "    "
+        echo -n "${hbPaths[$index]}/config/config.json"
+        echo ""
+    done
+}
+
+status() {
+    indexs=$(getIndexs $1);
+    for index in $indexs; do
+        if [ $index -lt 0 ] || [ $index -gt ${#hbPaths[@]} ]; then
+            continue;
+        fi
+        
+        echo -n -e "[$(($index+1))]" | awk '{printf ("%05s",$NF)}';
+        echo -n -e " "
+        pid=$(getHomebridgePID ${hbPaths[$index]});
+        if [ -z "$pid" ]; then
+            echo -n "[Not Run]"
+            echo -n -e " "
+            echo -n " " | awk '{printf ("%09s",$NF)}';
+            echo -n -e " "
+            echo -n " " | awk '{printf ("%15s",$NF)}';
+        else
+            echo -n -e "[Running]"
+            echo -n -e " "
+            echo -n $pid | awk '{printf ("%09s",$NF)}';
+            echo -n -e " "
+            ps -o etimes= -p $pid | awk '{printf("%d-%02d:%02d:%02d\n",($1/60/60/24),($1/60/60%24),($1/60%60),($1%60))}' | awk '{printf ("%15s",$NF)}';
+        fi
+        echo -n -e "   "
+        echo -n ${hbPaths[$index]}
+        echo ""
+    done
+}
+
+toggle() {
+    indexs=$(getIndexs $1);
+    for index in $indexs; do
+        if [ $index -lt 0 ] || [ $index -gt ${#hbPaths[@]} ]; then
+            continue;
+        fi
+        
+        pid=$(getHomebridgePID ${hbPaths[$index]});
+        if [ -z "$pid" ]; then
+            start $(($index+1))
+        else
+            stop $(($index+1))
+        fi
+    done
+}
+
+start() {
+    if [ -n "$LOG_FILE_PATH" ]; then
+        if [ ! -x "$LOG_FILE_PATH" ]; then
+            mkdir "$LOG_FILE_PATH"
+            echo "[WARN] mkdir $LOG_FILE_PATH"
+        fi
+    fi
+        
+    indexs=$(getIndexs $1);
+    for index in $indexs; do
+        if [ $index -lt 0 ] || [ $index -gt ${#hbPaths[@]} ]; then
+            continue;
+        fi
+        
+        pid=$(getHomebridgePID ${hbPaths[$index]});
+        if [ -z "$pid" ]; then
+            cmd="nohup ${basepath}/homebridge $STARTUP_PARAM -U ${hbPaths[$index]}/config/ ";
+            if [ -n "$PLUGIN_FILE_PATH" ]; then
+                cmd="$cmd""-P $PLUGIN_FILE_PATH";
+            else
+                cmd="$cmd""-P ${hbPaths[$index]}/plugin/";
+            fi
+            cmd="$cmd"" >> ";
+            if [ -n "$LOG_FILE_PATH" ]; then
+                cmd="$cmd""$LOG_FILE_PATH/$(basename ${hbPaths[$index]}).log";
+                echo "============ HBService Start "`date '+%Y-%m-%d %H:%M:%S'`" =============" >> "$LOG_FILE_PATH/$(basename ${hbPaths[$index]}).log"
+            else
+                cmd="$cmd""/dev/null";
+            fi
+            cmd="$cmd"" 2>&1 &";
+            
+            eval "$cmd"
+        else
+            echo "[WARN] HBService(${hbPaths[$index]}) is runing.";
+        fi
+    done
+}
+
+stop() {
+    indexs=$(getIndexs $1);
+    for index in $indexs; do
+        if [ $index -lt 0 ] || [ $index -gt ${#hbPaths[@]} ]; then
+            continue;
+        fi
+        
+        pid=$(getHomebridgePID ${hbPaths[$index]});
+        if [ -z "$pid" ]; then
+            echo "[WARN] HBService(${hbPaths[$index]}) is not runing.";
+        else
+            `kill $pid`
+        fi
+    done
+}
+
+help() {
+    echo "HBService, version $version";
+    echo "Usage:  bash HBService [option]";
+    echo "        bash HBService [option] index1,index2...";
+    echo "options:";
+    echo "        start         start homebridge";
+    echo "        stop          stop homebridge";
+    echo "        restart       restart homebridge";
+    echo "        status        check homebridge status";
+    echo "        config        check homebridge config";
+    echo "        version       display HBService version";
+    echo "more information reference";
+    echo "          https://github.com/Maxmudjon/HBService";
+}
+
+printVersion() {
+    echo "HBService v$version";
+}
+
+case "$1" in
+    'start')
+        start $2
+        ;;
+    'stop')
+        stop $2
+        ;;
+    'restart')
+        stop $2
+        start $2
+        ;;
+    'config')
+        config $2
+        ;;
+    'status')
+        status $2
+        ;;
+    'toggle')
+        toggle $2
+        ;;
+    'help')
+        help
+        ;;
+    'version')
+        printVersion
+        ;;
+    *)
+        help
+        exit 1
+        ;;
+esac
+
